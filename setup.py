@@ -1,11 +1,5 @@
 from setuptools import setup, find_packages
 
-install_requires = [
-]
-
-tests_require = install_requires + [
-    'nose', 'nosexcover'
-]
 
 setup(
     name='vmock',
@@ -16,14 +10,14 @@ setup(
     maintainer='Volodymyr Burenin',
     maintainer_email='vburenin@gmail.com',
     packages=find_packages(),
-    install_requires=install_requires,
-    tests_require=tests_require,
+    install_requires=[],
+    tests_require=['nose', 'nosexcover'],
     test_suite='nose.collector',
     extras_require={
-        'test': tests_require,
+        'test': ['nose', 'nosexcover'],
     },
     url='https://github.com/vburenin/vmock',
-    license='License :: MIT',
+    license='MIT',
     classifiers=['License :: OSI Approved :: MIT License',
                  'Development Status :: 5 - Production/Stable',
                  'Intended Audience :: Developers',
