@@ -6,7 +6,7 @@ import inspect
 import types
 
 from vmock.methodmock import MethodMock, MethodStub
-from vmock.mockcallaction import MockCallAction
+from vmock.callaction import ActionConfig
 from vmock.mockerrors import CallSequenceError
 from vmock.mockerrors import CallsNumberError
 from vmock.mockerrors import MockError
@@ -26,13 +26,13 @@ class MockControl(object):
     """
 
     def __init__(self):
-        self.__exp_queue = []
-        self.__stubs = {}
-        self.__static_stubs = {}
-        self.__object_mocks = {}
-        self.__record = True
+        self._exp_queue = []
+        self._stubs = {}
+        self._static_stubs = {}
+        self._object_mocks = {}
+        self._recording = True
         self.__play_pointer = 0
-        self.__current_action = None
+        self._current_action = None
         self.__error = None
 
     def mock_constructor(self, module, class_name,
@@ -223,7 +223,7 @@ class MockControl(object):
     def replay(self):
         """Switches from recording to replay mode."""
         self._save_current_action()
-        self.__record = False
+        self._recording = False
 
     def verify(self):
         """Do post execution verification."""
@@ -239,16 +239,16 @@ class MockControl(object):
 
         # Verify stubs.
         errors = []
-        for stub in self.__stubs.values():
+        for stub in self._stubs.values():
             for action in stub:
-                error_text = action.get_call_error()
+                error_text = action.check_errors()
                 if error_text:
                     errors.append(str('%s - %s' % (str(action), error_text)))
 
         # Verify static stubs.
-        for stub in self.__static_stubs.values():
+        for stub in self._static_stubs.values():
             for action in stub:
-                error_text = action.get_call_error()
+                error_text = action.check_errors()
                 if error_text:
                     errors.append(str('%s - %s' % (str(action), error_text)))
 
@@ -257,7 +257,7 @@ class MockControl(object):
 
     def tear_down(self):
         """Restore all mocked function/method/classes back."""
-        for methods in self.__object_mocks.values():
+        for methods in self._object_mocks.values():
             for method_data in methods.values():
                 if method_data is not None:
                     method_data._restore_original()
@@ -275,76 +275,88 @@ class MockControl(object):
         if self.__error is not None:
             raise self.__error
 
-    def get_new_action(self, obj, args, kwargs):
+    def new_action(self, obj, args, kwargs):
         """Saves current action and creates new one."""
-        assert self.__record, 'The play mode is set'
+        assert self._recording, 'The play mode is set'
         self._save_current_action()
-        self.__current_action = MockCallAction(obj, args, kwargs)
-        return self.__current_action
+        self._current_action = ActionConfig(obj, args, kwargs)
+        return self._current_action
 
-    def get_new_static_action(self, obj, args, kwargs):
+    def new_static_action(self, obj, args, kwargs):
         """Creates new static action."""
 
-        assert self.__record, 'The play mode is set'
+        assert self._recording, 'The play mode is set'
 
-        static_action = MockCallAction(obj, args, kwargs)
-        # Default static action can be called any times times.
-        static_action.anyorder().anytimes()
+        static_action_cfg = ActionConfig(obj, args, kwargs)
+        # Default static action can be called any number of times.
+        static_action = static_action_cfg.anytimes().make_action()
 
         # Check if there is no stubs already exists.
-        for action in self.__static_stubs.get(obj, []):
-            if static_action._compare_args(action.args, action.kwargs):
+        for action in self._static_stubs.get(obj, []):
+            if static_action.cmp_args(action.args, action.kwargs):
                 raise ValueError('Static stub already exists!')
 
         # Create container for MethodMock stubs.
-        if obj not in self.__static_stubs:
-            self.__static_stubs[obj] = []
+        if obj not in self._static_stubs:
+            self._static_stubs[obj] = []
 
-        self.__static_stubs[obj].append(static_action)
-        return static_action
+        self._static_stubs[obj].append(static_action_cfg)
+
+        return static_action_cfg
 
     def redefine_static_action(self, obj, args, kwargs):
         """Redefines static action for the stub.
         """
 
-        assert self.__record, 'The play mode is set'
+        assert self._recording, 'The play mode is set'
 
-        static_action = MockCallAction(obj, args, kwargs)
+        static_action = ActionConfig(obj, args, kwargs)
         # Default static action can be called any times times.
         static_action.anyorder().anytimes()
 
-        self.__static_stubs[obj] = [static_action]
+        self._static_stubs[obj] = [static_action]
         return static_action
 
     def is_recording(self):
         """Check if we are in recording mode."""
-        return self.__record
+        return self._recording
 
     def find_stub(self, mock_obj, args, kwargs):
         """Find existing stub and increase call counter."""
-        for action in self.__stubs.get(mock_obj, []):
-            if action._compare_args(args, kwargs):
+        for action in self._stubs.get(mock_obj, []):
+            if action.cmp_args(args, kwargs):
                 return action
         return None
 
+    def compile_stub(self, mock_obj):
+        new_actions = []
+        actions = self._static_stubs.get(mock_obj, [])
+        for a in actions:
+            if isinstance(a, ActionConfig):
+                a = a.make_action()
+            new_actions.append(a)
+        self._static_stubs[mock_obj] = new_actions
+        return new_actions
+
     def find_static_mock(self, mock_obj, args, kwargs):
-        """Find existing stub and increase call counter."""
-        for action in self.__static_stubs.get(mock_obj, []):
-            if action._compare_args(args, kwargs):
+        """Find existing stub."""
+        for action in self.compile_stub(mock_obj):
+            if action.cmp_args(args, kwargs):
                 return action
+
         return None
 
     def pop_current_record(self):
         """Pop next record from the expectation queue."""
-        assert not self.__record, "MockControl is still in record mode"
+        assert not self._recording, "MockControl is still in record mode"
         try:
             if self.__play_pointer > 0:
-                exp_call = self.__exp_queue[self.__play_pointer - 1]
-                if not exp_call._is_times_limit():
+                exp_call = self._exp_queue[self.__play_pointer - 1]
+                if not exp_call.is_times_limit():
                     return exp_call
 
             self.__play_pointer += 1
-            return self.__exp_queue[self.__play_pointer - 1]
+            return self._exp_queue[self.__play_pointer - 1]
         except IndexError:
             return None
 
@@ -378,7 +390,6 @@ class MockControl(object):
             display_name = class_def.__name__
         return mock_src_gen.init_fake_class(
             self, class_def, display_name, is_stub)
-
 
     @staticmethod
     def _extend_func_def(func_def):
@@ -424,12 +435,12 @@ class MockControl(object):
             raise MockError('Method %s is not mockable' % func_def.name)
 
         if not hasattr(func_def.owner, func_def.name):
-            raise ValueError('Object does not have such method: %s' % \
-                             (func_def.name,))
+            raise ValueError(
+                'Object does not have such method: ' + func_def.name)
 
         func_def = self._extend_func_def(func_def)
 
-        owner_mocks = self.__object_mocks.setdefault(func_def.owner, {})
+        owner_mocks = self._object_mocks.setdefault(func_def.owner, {})
 
         # None must be stored to do not rollback in case of tear_down.
         if func_def.name not in owner_mocks:
@@ -450,33 +461,32 @@ class MockControl(object):
 
         return new_mock
 
-    def _add_record(self, call_action):
-        """Adds new MockCall action to an appropriate storage."""
-
-        assert self.__record, 'The play mode is set'
-
-        # Check if there is no stubs already exists.
-        for stub_action in self.__stubs.get(call_action.obj, []):
-            if call_action._compare_args(stub_action.args, stub_action.kwargs):
-                raise ValueError('Stub already exists!')
-
-        if call_action.is_ordered:
-
-            # If action is stub we should check if such doesn't exist already
-            # in the expectation queue.
-
-            for e_call in self.__exp_queue:
-                if call_action._compare_args(e_call.args, e_call.kwargs):
-                    raise ValueError('Pattern exists in the expect queue')
-            # Create container for MethodMock stubs.
-            if call_action.obj not in self.__stubs:
-                self.__stubs[call_action.obj] = []
-            self.__stubs[call_action.obj].append(call_action)
-        else:
-            # Save as sequence if it is not a stub.
-            self.__exp_queue.append(call_action)
-
     def _save_current_action(self):
         """Saves current action if new one is requested."""
-        if self.__current_action is not None:
-            self._add_record(self.__current_action)
+        assert self._recording, 'The play mode is set'
+
+        if self._current_action is None:
+            return
+
+        action = self._current_action.make_action()
+
+        # Check if there is no stubs already exists.
+        for stub_action in self._stubs.get(action.mock, []):
+            if action.cmp_args(stub_action.args, stub_action.kwargs):
+                raise ValueError('Stub already exists!')
+
+        if action.non_ordered:
+            # If action is stub we should check if such doesn't exist already
+            # in the expectation queue.
+            for e_call in self._exp_queue:
+                if action.cmp_args(e_call.args, e_call.kwargs):
+                    raise ValueError('Pattern exists in the expect queue')
+            # Create container for MethodMock stubs.
+            if action.mock not in self._stubs:
+                self._stubs[action.mock] = []
+            self._stubs[action.mock].append(action)
+        else:
+            # Save as sequence if it is not a stub.
+            self._exp_queue.append(action)
+
+        self._current_action = None

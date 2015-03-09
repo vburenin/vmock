@@ -4,6 +4,7 @@
 import inspect
 import functools
 
+from vmock import argutils
 from vmock import matchers
 from vmock.mockerrors import CallSequenceError
 from vmock.mockerrors import InterfaceError
@@ -123,7 +124,7 @@ class MethodMock(object):
     def _save_call(self, args, kwargs):
         """Save current call"""
         self._verify_interface(args, kwargs)
-        return self._mc.get_new_action(self, args, kwargs)
+        return self._mc.new_action(self, args, kwargs)
 
     def _make_call(self, a_args, a_kwargs):
         """Mock call.
@@ -143,50 +144,31 @@ class MethodMock(object):
         # Find stub first.
         e_data = self._mc.find_stub(self, a_args, a_kwargs)
 
-        # If there are no stubs, get call from the queue of expectors
+        # If there are no stubs, get call from the queue of expecting calls.
         if e_data is None:
             e_data = self._mc.pop_current_record()
 
-        # Failure if there are no stubs and expectors in the queue.
+        # Failure if there are no stubs and expecting calls in the queue.
         if e_data is None:
             error = CallSequenceError(
                 'No more calls are expected. \n'
                 'Actual call: %s, with args: %s' %
-                (str(self), self._args_to_str(a_args, a_kwargs)))
+                (str(self), argutils.args_to_str(a_args, a_kwargs)))
             self._mc.raise_error(error)
 
-        if e_data.obj != self or not e_data._compare_args(a_args, a_kwargs):
+        if e_data.mock != self or not e_data.cmp_args(a_args, a_kwargs):
             err_str = ('Unexpected method call.\n'
                        'Expected object: %s\n'
                        'Expected args: %s\n'
                        'Actual object: %s\n'
                        'Actual args: %s\n')
-            fmt_params = (str(e_data.obj),
-                          self._args_to_str(e_data.args, e_data.kwargs),
-                          str(self), self._args_to_str(a_args, a_kwargs))
+            fmt_params = (str(e_data.mock),
+                          argutils.args_to_str(e_data.args, e_data.kwargs),
+                          str(self), argutils.args_to_str(a_args, a_kwargs))
             error = UnexpectedCall(err_str % fmt_params)
             self._mc.raise_error(error)
 
-        return e_data._get_result(*a_args, **a_kwargs)
-
-    @staticmethod
-    def _args_to_str(args, kwargs):
-        """Format arguments in appropriate way."""
-        args_str = []
-        kwargs_str = {}
-        for arg in args:
-            if isinstance(arg, int):
-                args_str.append(arg)
-            else:
-                args_str.append(str(arg))
-
-        for key in kwargs.keys():
-            if isinstance(kwargs[key], int):
-                kwargs_str[key] = kwargs[key]
-            else:
-                kwargs_str[key] = str(kwargs[key])
-
-        return '(%s, %s)' % (args_str, kwargs_str)
+        return e_data.call(a_args, a_kwargs)
 
 
 class MethodStub(MethodMock):
@@ -199,14 +181,14 @@ class MethodStub(MethodMock):
         if e_data is None:
             if self._mc.is_recording():
                 self._verify_interface(args, kwargs)
-                return self._mc.get_new_static_action(self, args, kwargs)
+                return self._mc.new_static_action(self, args, kwargs)
             else:
                 self._mc.raise_error(CallSequenceError(
                     'There is no static mock for this call. \n'
                     'Actual call: %s, with args: %s' %
-                    (str(self), self._args_to_str(args, kwargs))))
+                    (str(self), argutils.args_to_str(args, kwargs))))
         else:
-            return e_data._get_result(*args, **kwargs)
+            return e_data.call(args, kwargs)
 
     def redefine(self, *args, **kwargs):
         """Redefine stub action."""

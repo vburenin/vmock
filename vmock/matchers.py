@@ -365,3 +365,11 @@ def any_val():
 def is_none():
     """Matches none values."""
     return NoneMatcher()
+
+
+def compare_values(val1, val2):
+    """Compare call values."""
+    if isinstance(val1, MockMatcher) and not isinstance(val2, MockMatcher):
+        return val1.compare(val2)
+    else:
+        return val1 == val2
